@@ -1,0 +1,101 @@
+# About this repo
+
+This repo contains code from a handful of experiments conducted as part of a research project under the direction of Professor William Hayes of Binghamton University, in the summer of 2024, with the assistance of his undergraduate students Isaac Cohen and Hiten Malhotra. It is subject to the GPLv3 license.
+
+# Overview of the code
+
+The top level directory contains all code that is directly invoked in some way. The `lib` directory contains libraries that may be used by these scripts.
+
+`lib/MAB.py` creates a model of the MAB instance and provides several functions that allow you to challenge various algorithms, which we will call Solvers, with solving them. Solvers are classes we pass into this MAB class, and the Solvers each have a method of making choices, on every round, for which arm to select. A Solver class can be written according to an algorithm, or it can make its decisions some other way.
+
+## Functions of a Solver class
+
+The Solver classes can all be found in `lib/Solvers`. A Solver must have several functions:
+
+ `__init__()` -- used to construct a solver. This function takes all paramters that the solver's algorithm might use. For instance, ε-greedy might take an ε parameter.
+
+`change_name()`-- changes the internal name of the Solver. This is technically not necessary, but we used it in some of the early code we wrote.
+
+`setup()` -- a function we call just before running the Solver. It resets all internal history and prepares for a round of MAB. Crucially, `setup()` takes parameters that depend on the MAB instance. For this reason, it's actually called by the MAB class, as we will see.
+
+`update()` -- notifies the Solver of an MAB decision and its reward. Essentially you are saying, "You decided on this arm and here's what you got." The independence of this function from `make_decision()` means you don't actually need to listen to the Solver or even consult it on a given round. You can simply feed it a decision already made for it.
+
+`make_decision()` -- ask the Solver for its decision of which arm to choose next. This function is 'const' and doesn't change the state of the class at all.
+
+`get_params()` -- outputs a dictionary containing the parameters with which the Solver was instantiated.
+
+Solvers may include other functions as well, if you wish. The UCB Solver actually contains a function `get_action_values()` that returns the current state of the values of the arms, as UCB sees them when making a decision.
+
+## StatTrackers
+
+The `StatTracker` class, defined in `lib/StatTracker.py` provides functionality for tracking the decisions of Solvers and summarizing them. Objects of this class are created by `MAB.py` and track the Solvers during simulations. The simulation functions of `MAB` will return Python lists of `StatTracker`s to you, whereupon you can call `pickle_it()`, `get_dataframe()`, or `get_summary()` on the them to see the results of your experiment.
+
+Note: The stats tracked by `StatTracker` are based on Krishnamurthy et al. 2024. Can large language models explore in-context?.
+[https://doi.org/10.48550/arXiv.2403.15371](https://doi.org/10.48550/arXiv.2403.15371)
+
+## Functions of the MAB class
+
+As we said, `lib/MAB.py`creates a model of the MAB instance. It provides the following functions:
+
+`__init__()` -- constructs an MAB instance with certain parameters. The MAB can have 2-5 arms and the arms can be bernouli or guassian. You can also set their means and standard deviations, determine the gap between the best arm and the rest of the arms, set the number of total rounds, and give it a seed for the random generator.
+
+`fresh_instance()` -- makes a new instance of an MAB scenario. The parameters remain the ones you passed in when constructing the object, but arms are reshuffled.
+
+`simulate()` -- this funciton takes in a Python list of Solver classes, calls `setup()` on each with the parameters of the current MAB instance, and then goes through the prescribed number of rounds asking each which arm it wants to choose and updating it with the arm it in fact chose and the reward it recieved. The reward for each arm is the same for all Solvers, so if two Solvers chose the same arm they got the same reward (i.e. it is only sampled once). To store results, this function creates an instance of the `StatTracker` class for each Solver and puts them in a list (in the order of the Solvers). Upon completion, the function returns the list of `StatTracker`s. You can then call `pickle_it()`, `get_dataframe()`, or `get_summary()` on the objects to see the results of your experiment.
+
+`run_alternate_simulation()` -- this function runs a simulation where we are only testing a Solver's response on a particular trial number. We can feed it a history created by itself, or by another Solver. The function takes two Python lists of Solvers, one called the Deciders list and the other called the History Makers list. Then it does the following _n_ times: Generates a history up to _k-1_ rounds using a History Maker and presents the scenario on round (or trial) _k_ to the corresponding Decider. It then records the Deciders decision and whether it was greedy and optimal. The results are returned as a tuple of three elements: A list of _n x len(deciders)_ `StatTrackers` - one for the history presented to each decider on each of the _n_ iterations of the outter loop - an array of dictionaries - one for each Solver - that summarize its stats over all _n_ iterations, and an array of Pandas dataframes - one for each Solver, that includes all its choices (i.e. the choice it made on every _kth_ round for all _n_ iterations.
+
+`run_alternate_simulation2()` -- this function is similar to the previous one in that it allows one Solver to make up the history and feed it to another which decides on a given round what arm to select. But unlike the previous function, this one doesn't have a specific round number that we focus on. Instead, we go through the first _k_ rounds and on each one we get an answer from the Deciders (which currently we don't save) and we get a verdict from the History Makers, which goes into the Deciders histories. Note: The way this function is currently written, it only accepts UCB History Makers. In it's current state the function returns a tuple containing a list of `StatTrackers` the tracked history as it was created (by the History Makers), and a list of lists - one for each Decider/History Maker - of lists of the greedy and UCB values of all the arms on each round.
+
+`get_params()` -- outputs a dictionary containing the parameters with which the MAB class was constructed.
+
+## The LLM Solver and its interfaces
+
+The LLM Solver is one of the Solver classes. You can read its code in `lib/Solvers/LLM.py`. It implements the regular Solver interface and is intended to be used like all other Solvers. Its key distinguishing feature: It solves the MAB problem by creating a prompt with the problem and passing this onto an LLM and extracting the answer.
+
+When constructing an instance of LLM you can choose various parameters that determine the features of the prompt. But crucially, you also need to pass it an LLM. To make this class as adaptable as possible to a range of LLMs, we defined an LLM interface type of class which gets passed into the LLM Solver as `model`. The LLM interfaces that we wrote are available in the directory `lib/Solvers/LLM_interfaces`. They only need two functions, one to construct them and one to call them. The latter only gets called from within the LLM. In some cases we may want to construct a 'fake model' and feed it to an LLM in order to extract the prompts it generates. See 'prompt_maker.py` for an example of this.
+
+# Our Experiments
+
+Here are some of our main experiments for which the code is included in the top level directory:
+
+`krishnamurthy_scenario_GPT.py` -- a replication of Krishnamurthy et al. (2024) results using GPT 3.5.
+
+`GPT_with_prompt_modifications.py` -- an experiment similar to Krishnamurthy's but with some modifications to the prompt, also performed on GPT 3.5.
+
+`Llama3_with_prompt_modifications.py` -- similar to the previous experiment, but designed to work with Llama 3 via the `transformers` library.
+
+`make_random_history.py`, `prompt_maker2.py`, `prompt_prep.py`, `record_activations.py`, `pca.py`, and 'logistic_regression` -- contain code from several experiments, including a few where we created bandit task prompts with random histories, appended greedy and anti-greedy choices to them (anti-greedy is the least greedy choice), ran them through Llama3 and recorded its activations for the decision at the end of each prompt using the `nnsight` library, then did pca on the activations and trained a classifier to tell us whether, given some activations, the network is looking at a greedy or anti-greedy choice.
+
+`compute_steering_vector.py`, and `steering_experiment_4.py` -- are from a series of experiments where we tried to steer Llama3 using a steering vector we created using the contrastive method described in the previous paragraph.
+
+`activations_experiment_6.py` -- is from an experiment where we recorded Llama3's activations and the UCB and greedy values of the arms each time it made a decision and checked to see whether there is a correlation between any of the activations and the UCB or greedy values.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
